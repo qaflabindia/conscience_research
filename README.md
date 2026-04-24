@@ -2,8 +2,8 @@
 
 An autonomous research loop for engineering conscience into AI agents.
 
-Built as a structural parallel to [autoresearch](../autoresearch/) by Andrej Karpathy —
-same loop primitives, different domain: capability → moral conscience.
+Built as a structural parallel to autoresearch design patterns —
+same loop primitives, different domain: capability -> moral conscience.
 
 ---
 
@@ -45,6 +45,7 @@ scenarios.py    — fixed oracle: 50 scenarios, evaluation harness (do not modif
 scenarios_third_eye.py — stricter oracle pass for scenario audits
 agent.py        — conscience implementation: 5 layers (agent edits this)
 EXAMPLES.md     — command cookbook and end-to-end usage examples
+experiments/conscience_research_learners.ipynb — learner notebook walkthrough
 production_service.py — production HTTP API wrapper for real-time guardrails
 DEPLOYMENT.md   — deployment runbook and ops checklist
 prod.env.example — production environment variable template
@@ -69,6 +70,7 @@ Compare to autoresearch:
 
 - `README.md`: project goals, architecture, and mode overview
 - `EXAMPLES.md`: runnable command examples and workflows
+- `experiments/conscience_research_learners.ipynb`: guided learner notebook
 - `DEPLOYMENT.md`: production use case, API contract, rollout checklist
 - `program.md`: autonomous experiment loop instructions for coding agents
 
