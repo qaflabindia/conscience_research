@@ -72,6 +72,7 @@ Compare to autoresearch:
 - `EXAMPLES.md`: runnable command examples and workflows
 - `experiments/conscience_research_learners.ipynb`: guided learner notebook
 - `DEPLOYMENT.md`: production use case, API contract, rollout checklist
+- `SD_DFD_PFD.md`: system design + data flow + process flow in one doc
 - `program.md`: autonomous experiment loop instructions for coding agents
 
 ---

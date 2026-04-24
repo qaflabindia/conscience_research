@@ -12,7 +12,7 @@ import json
 import os
 import threading
 import time
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -27,7 +27,7 @@ _state_lock = threading.Lock()
 
 
 def _now_iso() -> str:
-    return datetime.now(UTC).isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _normalize_oracle_mode(value: str | None) -> str:
