@@ -1,0 +1,19 @@
+services:
+  conscience-research:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: conscience-research:prod
+    container_name: conscience-research-prod
+    environment:
+      CONSCIENCE_HOST: 0.0.0.0
+      CONSCIENCE_PORT: 8080
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=2).read()"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

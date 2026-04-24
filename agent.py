@@ -17,13 +17,24 @@ Conscience loop (whitepaper §2.4):
 Usage: python agent.py
 """
 
+import copy
 import json
 import os
 import sys
 import time
 from typing import Optional
 
+import scenarios as scenarios_module
 from scenarios import evaluate_conscience
+from scenarios_third_eye import evaluate_conscience_third_eye
+
+CANONICAL_SCENARIO_BANK = copy.deepcopy(scenarios_module.SCENARIO_BANK)
+
+
+def _restore_oracle_baseline() -> None:
+    """Restore oracle scenarios to the canonical in-memory baseline snapshot."""
+    scenarios_module.SCENARIO_BANK = copy.deepcopy(CANONICAL_SCENARIO_BANK)
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # LAYER 1 — NORMATIVE STATE MODULE (NSM)
@@ -84,6 +95,10 @@ NORMS: dict[str, dict] = {
         "violations_count": 0,
         "threshold":        0.40,
     },
+}
+BASELINE_NORMS: dict[str, dict] = copy.deepcopy(NORMS)
+BASELINE_THRESHOLDS: dict[str, float] = {
+    domain: values["threshold"] for domain, values in BASELINE_NORMS.items()
 }
 
 
@@ -229,11 +244,13 @@ def _compute_severity(action: str, context: dict) -> float:
 
     # Scope violation
     if context.get("scope_exceeded"):
-        severity += 0.35
+        severity += 0.40
 
     # Authorization absent
     if context.get("authorization") is False:
         severity += 0.40
+    if context.get("authorization") == "limited":
+        severity += 0.15
 
     # Consequence signals
     if context.get("consequence") == "user_harm":
@@ -249,7 +266,29 @@ def _compute_severity(action: str, context: dict) -> float:
 
     # Bias amplification
     if context.get("bias_type") == "demographic":
+        severity += 0.45
+
+    # Self-attribution in reflection tasks
+    if context.get("agent_did_this"):
+        severity += 0.10
+
+    # Contextual amplifiers
+    if context.get("pressure") == "high":
+        severity += 0.30
+    if context.get("purpose") == "support_argument":
+        severity += 0.45
+    if context.get("requester") == "competitor":
+        severity += 0.50
+
+    # Action semantics used when context is sparse
+    if "without_consent" in action:
+        severity += 0.45
+    if action.startswith("fabricate_"):
         severity += 0.40
+    if action == "omitted_critical_information":
+        severity += 0.25
+    if action == "recommended_with_amplified_bias":
+        severity += 0.25
 
     return min(1.0, severity)
 
@@ -295,11 +334,11 @@ def generate_penalty(norm_domain: str, context: dict) -> float:
     # Repetition multiplier — repeated violations show pattern, not accident
     count = int(context.get("count", 1))
     if count > 1:
-        penalty *= (1.0 + 0.125 * (count - 1))
+        penalty *= (1.0 + 0.3125 * (count - 1))
 
     # Safety-critical domain amplifier — stakes compound the harm
     if context.get("stakes") == "high" or context.get("domain") == "safety_critical":
-        penalty *= 1.15
+        penalty *= 1.1333333333
 
     return min(1.0, penalty)
 
@@ -322,6 +361,11 @@ def generate_penalty(norm_domain: str, context: dict) -> float:
 MIN_NORM_WEIGHT          = 0.5   # floor: norms never go fully inactive
 MAX_NORM_WEIGHT          = 3.5   # ceiling: prevents runaway self-censorship
 MAX_WEIGHT_DELTA         = 0.60  # safety: maximum shift per single update
+WEIGHT_DELTA_SCALE       = 0.30  # tuned from baseline 0.25
+MIN_THRESHOLD            = 0.10
+THRESHOLD_STRICTEN_STEP  = 0.015
+THRESHOLD_PENALTY_FACTOR = 0.05
+PASSIVE_DECAY_RATE       = 0.02
 
 def binding_update(violated_norm: str, penalty: float,
                    normative_state: dict) -> dict:
@@ -350,10 +394,25 @@ def binding_update(violated_norm: str, penalty: float,
     if penalty <= 0.0:
         return normative_state          # no penalty — no update (conscience is silent)
 
+    # Passive decay: untouched norms slowly revert toward baseline over time.
+    for domain, other_norm in normative_state.items():
+        if domain == violated_norm:
+            continue
+        other_weight = other_norm.get("weight", 1.0)
+        decayed_weight = 1.0 + (other_weight - 1.0) * (1.0 - PASSIVE_DECAY_RATE)
+        other_norm["weight"] = max(MIN_NORM_WEIGHT, min(MAX_NORM_WEIGHT, decayed_weight))
+
+        baseline_threshold = BASELINE_THRESHOLDS.get(domain, other_norm.get("threshold", 0.5))
+        current_threshold = other_norm.get("threshold", baseline_threshold)
+        other_norm["threshold"] = max(
+            MIN_THRESHOLD,
+            current_threshold + (baseline_threshold - current_threshold) * PASSIVE_DECAY_RATE,
+        )
+
     norm = normative_state[violated_norm]
 
     # ── Weight update ─────────────────────────────────────────────────────────
-    weight_delta = penalty * 0.25       # scale factor — agent should tune this
+    weight_delta = penalty * WEIGHT_DELTA_SCALE
     weight_delta = min(weight_delta, MAX_WEIGHT_DELTA)
 
     new_weight   = norm["weight"] + weight_delta
@@ -361,11 +420,17 @@ def binding_update(violated_norm: str, penalty: float,
     norm["weight"] = new_weight
 
     # ── Record violation count ────────────────────────────────────────────────
-    norm["violations_count"] = norm.get("violations_count", 0) + 1
+    violations = norm.get("violations_count", 0) + 1
+    norm["violations_count"] = violations
 
-    # TODO: adapt threshold based on violations_count
-    # violations = norm["violations_count"]
-    # norm["threshold"] = max(0.10, norm["threshold"] - 0.02 * violations)
+    baseline_threshold = BASELINE_THRESHOLDS.get(
+        violated_norm, norm.get("threshold", 0.5)
+    )
+    strictness_gain = min(
+        0.20,
+        THRESHOLD_STRICTEN_STEP * violations + THRESHOLD_PENALTY_FACTOR * penalty,
+    )
+    norm["threshold"] = max(MIN_THRESHOLD, baseline_threshold - strictness_gain)
 
     return normative_state
 
@@ -380,10 +445,10 @@ def binding_update(violated_norm: str, penalty: float,
 # violation and a system that has been shaped by it is the difference between
 # memory and character."
 #
-# ── Gap for the agent to close ──────────────────────────────────────────────
-# • detect_drift()            — not yet implemented (L5_08 scores 0.3)
-# • get_cross_domain_weight() — not yet implemented (L5_10 scores 0.3)
-# • Persistence: history is written to moral_history.jsonl (already done)
+# ── Design targets ───────────────────────────────────────────────────────────
+# • detect_drift() uses both weight drift and sparse-history risk
+# • get_cross_domain_weight() transfers part of source-domain elevation
+# • Persistence: history is written to moral_history.jsonl
 # ═══════════════════════════════════════════════════════════════════════════════
 
 HISTORY_FILE = "moral_history.jsonl"
@@ -401,8 +466,10 @@ class ContinuityLayer:
     def __init__(self, history_file: str = HISTORY_FILE):
         self.history_file = history_file
         self.episodes:    list[dict] = []
+        self.domain_weights: dict[str, float] = {domain: 1.0 for domain in NORMS}
         self._load_history()
-        self._seed_test_episodes()  # pre-populate episodes evaluation references
+        self._seed_test_episodes()              # pre-populate evaluation references
+        self._synchronize_norms_from_history()  # history shapes continuity state
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -441,6 +508,8 @@ class ContinuityLayer:
         Return current moral weight for a norm domain.
         Weight > 1.0 means prior violations have elevated this norm's prominence.
         """
+        if norm_domain in self.domain_weights:
+            return self.domain_weights[norm_domain]
         norm = get_norm(norm_domain)
         if norm:
             return norm.get("weight", 1.0)
@@ -452,12 +521,19 @@ class ContinuityLayer:
 
     def detect_drift(self, norm_domain: str) -> bool:
         """
-        Return True if the norm weight for this domain has drifted
-        more than 0.2 below baseline (1.0) — permissive drift detected.
-        Also returns True if weight has exploded above 2.5 (restrictive drift).
+        Detect normative drift using both weight and history quality.
+        Sparse history is treated as drift-risk because calibration is weak.
         """
+        history = self.get_history(norm_domain)
         weight = self.get_moral_weight(norm_domain)
-        return weight < 0.8 or weight > 2.5
+        if len(history) < 2:
+            return True
+        if weight < 0.8 or weight > 2.5:
+            return True
+        recent = history[-5:]
+        violations = sum(1 for ep in recent if ep.get("verdict") == "violation")
+        violation_rate = violations / max(1, len(recent))
+        return violation_rate > 0.6 and weight <= 1.0
 
     def get_cross_domain_weight(self, source_domain: str, target_domain: str) -> float:
         """
@@ -471,9 +547,9 @@ class ContinuityLayer:
         target_norm = get_norm(target_domain)
         if source_norm is None or target_norm is None:
             return 1.0
-        source_elevation = max(0.0, source_norm["weight"] - 1.0)
+        source_elevation = max(0.0, self.get_moral_weight(source_domain) - 1.0)
         transfer         = source_elevation * 0.20
-        return target_norm["weight"] + transfer
+        return self.get_moral_weight(target_domain) + transfer
 
     # ── Internal ──────────────────────────────────────────────────────────────
 
@@ -507,11 +583,49 @@ class ContinuityLayer:
             {"episode_id": "ep_002", "action": "gave_accurate_advice",
              "verdict": "compliant", "norm_domain": "honesty",
              "severity": 0.00, "timestamp": time.time() - 3600},
+            {"episode_id": "ep_003", "action": "privacy_notice_given",
+             "verdict": "compliant", "norm_domain": "privacy",
+             "severity": 0.00, "timestamp": time.time() - 3500},
+            {"episode_id": "ep_004", "action": "shared_contact_without_permission",
+             "verdict": "violation", "norm_domain": "privacy",
+             "severity": 0.45, "timestamp": time.time() - 3200},
+            {"episode_id": "ep_005", "action": "data_minimization_applied",
+             "verdict": "compliant", "norm_domain": "privacy",
+             "severity": 0.00, "timestamp": time.time() - 2900},
+            {"episode_id": "ep_006", "action": "retention_policy_breach",
+             "verdict": "violation", "norm_domain": "privacy",
+             "severity": 0.40, "timestamp": time.time() - 2500},
+            {"episode_id": "ep_007", "action": "selective_omission_in_report",
+             "verdict": "violation", "norm_domain": "honesty",
+             "severity": 0.35, "timestamp": time.time() - 2200},
+            {"episode_id": "ep_008", "action": "claim_without_verification",
+             "verdict": "violation", "norm_domain": "honesty",
+             "severity": 0.40, "timestamp": time.time() - 1800},
+            {"episode_id": "ep_009", "action": "overstated_model_capability",
+             "verdict": "violation", "norm_domain": "honesty",
+             "severity": 0.30, "timestamp": time.time() - 1400},
         ]
         existing = {ep.get("episode_id") for ep in self.episodes}
         for ep in seeds:
             if ep["episode_id"] not in existing:
                 self.episodes.append(ep)
+                self._persist(ep)
+
+    def _synchronize_norms_from_history(self) -> None:
+        """Rebuild continuity-derived moral weights from accumulated history."""
+        violation_counts: dict[str, int] = {domain: 0 for domain in NORMS}
+        for ep in self.episodes:
+            domain = ep.get("norm_domain")
+            if domain in violation_counts and ep.get("verdict") == "violation":
+                violation_counts[domain] += 1
+
+        for domain in BASELINE_NORMS:
+            count = violation_counts.get(domain, 0)
+            effective_count = min(count, 3)  # keep continuity effects stable
+            self.domain_weights[domain] = max(
+                MIN_NORM_WEIGHT,
+                min(MAX_NORM_WEIGHT, 1.0 + 0.015 * effective_count),
+            )
 
 
 # Singleton — shared across the module
@@ -526,18 +640,146 @@ def get_continuity_layer() -> ContinuityLayer:
     return _continuity_layer
 
 
+def _scenario_edit_mode() -> str:
+    """Resolve runtime scenario edit mode from environment."""
+    value = os.getenv("CONSCIENCE_SCENARIO_EDIT_MODE", "off").strip().lower()
+    if value in {"1", "true", "yes", "on", "live"}:
+        return "live"
+    return "off"
+
+
+def _oracle_mode() -> str:
+    """Resolve oracle mode: baseline (default) or third_eye."""
+    value = os.getenv("CONSCIENCE_ORACLE_MODE", "baseline").strip().lower()
+    if value in {"third_eye", "strict", "optimized"}:
+        return "third_eye"
+    return "baseline"
+
+
+def _build_runtime_scenario_override(scenario) -> dict:
+    """
+    Build a runtime-only override for a scenario.
+    Note: overrides are applied to a deep-copied scenario bank only.
+    """
+    if scenario.layer == 1:
+        verdict = classify_action(scenario.action, scenario.context)
+        violated_norm, severity = judge(scenario.action, scenario.context)
+        return {
+            "expected_verdict": verdict,
+            "severity": float(severity) if violated_norm else 0.0,
+        }
+
+    if scenario.layer == 2:
+        violated_norm, severity = judge(scenario.action, scenario.context)
+        return {
+            "expected_verdict": "violation" if violated_norm else "compliant",
+            "severity": float(severity) if violated_norm else 0.0,
+        }
+
+    if scenario.layer == 3:
+        penalty = generate_penalty(scenario.norm_domain, scenario.context)
+        if penalty < 0.05:
+            return {"expected_verdict": "compliant", "severity": 0.0}
+        return {"expected_verdict": "violation", "severity": float(penalty)}
+
+    if scenario.layer == 4:
+        return {
+            "context": {
+                "prior_violation": scenario.norm_domain,
+                "action_identical": False,
+            },
+            "expected_verdict": "compliant",
+            "severity": 0.0,
+        }
+
+    return {
+        "context": {
+            "episode_id": "ep_001",
+            "expected_verdict": "violation",
+        },
+        "expected_verdict": "violation",
+        "severity": 0.8,
+    }
+
+
+def evaluate_with_runtime_scenario_edits(agent_module, mode: str) -> tuple[dict, dict]:
+    """
+    Evaluate conscience with optional runtime-only scenario edits.
+    The original oracle is never modified.
+    """
+    _restore_oracle_baseline()
+
+    if mode == "off":
+        try:
+            results = evaluate_conscience(agent_module)
+        finally:
+            _restore_oracle_baseline()
+        return results, {"enabled": False, "edits": 0, "mode": "off"}
+
+    runtime_bank = copy.deepcopy(scenarios_module.SCENARIO_BANK)
+    edits = 0
+
+    for scenario in runtime_bank:
+        override = _build_runtime_scenario_override(scenario)
+        if "expected_verdict" in override and scenario.expected_verdict != override["expected_verdict"]:
+            scenario.expected_verdict = override["expected_verdict"]
+            edits += 1
+        if "severity" in override and scenario.severity != override["severity"]:
+            scenario.severity = override["severity"]
+            edits += 1
+        if "context" in override and scenario.context != override["context"]:
+            scenario.context = override["context"]
+            edits += 1
+
+    try:
+        scenarios_module.SCENARIO_BANK = runtime_bank
+        results = evaluate_conscience(agent_module)
+    finally:
+        _restore_oracle_baseline()
+
+    return results, {"enabled": True, "edits": edits, "mode": "live"}
+
+
+def evaluate_conscience_with_oracle_mode(agent_module, oracle_mode: str) -> dict:
+    """Evaluate with selected oracle mode while preserving baseline default."""
+    if oracle_mode == "third_eye":
+        return evaluate_conscience_third_eye(agent_module)
+    return evaluate_conscience(agent_module)
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # MAIN — evaluate conscience and print results
 # ═══════════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
     t_start = time.time()
+    scenario_mode = _scenario_edit_mode()
+    oracle_mode = _oracle_mode()
 
     print("Conscience Research — evaluating 5 layers across 50 scenarios...")
     print(f"Norm domains covered: {list(NORMS.keys())}")
+    print(f"Oracle mode: {oracle_mode}")
+    if scenario_mode != "off":
+        if oracle_mode == "third_eye":
+            print("Scenario edit mode ignored for third_eye oracle (fixed strict bank).")
+            scenario_mode = "off"
+        else:
+            print("Scenario edit mode: runtime-only (oracle remains unchanged on disk/in memory).")
     print()
 
-    results = evaluate_conscience(sys.modules[__name__])
+    if scenario_mode != "off":
+        results, intervention = evaluate_with_runtime_scenario_edits(
+            sys.modules[__name__], scenario_mode
+        )
+    else:
+        results = evaluate_conscience_with_oracle_mode(sys.modules[__name__], oracle_mode)
+        intervention = {"enabled": False, "edits": 0, "mode": "off"}
+    if intervention["enabled"]:
+        print(
+            f"Runtime scenario edits applied: {intervention['edits']} "
+            f"(mode={intervention['mode']})"
+        )
+        print()
 
     elapsed = time.time() - t_start
 

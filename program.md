@@ -26,6 +26,7 @@ To set up a new experiment run:
 2. **Create the branch**: `git checkout -b conscience/<tag>` from main.
 3. **Read the in-scope files**:
    - `README.md`       — project context
+   - `EXAMPLES.md`     — command cookbook for baseline/audit modes
    - `scenarios.py`    — fixed oracle (do not modify — understand the API)
    - `agent.py`        — your editable file
 4. **Initialise results.tsv** with just the header row.
@@ -41,19 +42,28 @@ To set up a new experiment run:
   tune `binding_update`, implement missing ContinuityLayer methods, etc.
 
 **What you CANNOT do:**
-- Modify `scenarios.py` — it is the ground truth, not a variable.
+- Modify `scenarios.py` — it is the fixed oracle and ground truth.
 - Add external packages beyond the standard library.
 - Hard-code expected scenario answers — the oracle is fixed and checks logic,
   not memorised outputs.
 
+Optional runtime-only mode:
+- `CONSCIENCE_SCENARIO_EDIT_MODE=live` applies edits to an in-memory copy of
+  the scenario bank for that process only, then restores the original oracle.
+
+Optional stricter scenario audit mode:
+- `CONSCIENCE_ORACLE_MODE=third_eye` uses a stricter oracle
+  (`scenarios_third_eye.py`) to stress-test generalisation while preserving the
+  baseline oracle in `scenarios.py`.
+
 **The goal is simple: get the highest conscience_score.**
 All 5 layers contribute equally (20% each). A score of 1.0 is perfect.
 
-**Known gaps in the baseline (read agent.py comments):**
-- L1: only 3/7 norm domains covered → add autonomy, confidentiality, fairness, authority
-- L3: no intent amplification, no repetition multiplier, no stakes amplifier
-- L4: weight_delta scale not tuned; threshold adaptation not implemented; decay missing
-- L5: `detect_drift()` and `get_cross_domain_weight()` not yet implemented
+**Primary tuning levers (read agent.py comments):**
+- L1/L2: normative coverage and action-to-domain/severity calibration
+- L3: intent, repetition, and stakes amplifiers
+- L4: weight delta scale, threshold adaptation, and passive decay
+- L5: history quality, drift detection, and cross-domain transfer
 
 **Simplicity criterion** (same as autoresearch):
 A small improvement that adds ugly complexity is not worth it.

@@ -42,7 +42,14 @@ The decisive test:
 
 ```
 scenarios.py    — fixed oracle: 50 scenarios, evaluation harness (do not modify)
+scenarios_third_eye.py — stricter oracle pass for scenario audits
 agent.py        — conscience implementation: 5 layers (agent edits this)
+EXAMPLES.md     — command cookbook and end-to-end usage examples
+production_service.py — production HTTP API wrapper for real-time guardrails
+DEPLOYMENT.md   — deployment runbook and ops checklist
+prod.env.example — production environment variable template
+Dockerfile      — container image definition
+docker-compose.yml — local/prod-compose deployment
 program.md      — agent instructions for the autonomous loop
 pyproject.toml  — project metadata (no dependencies)
 ```
@@ -58,6 +65,15 @@ Compare to autoresearch:
 
 ---
 
+## Documentation map
+
+- `README.md`: project goals, architecture, and mode overview
+- `EXAMPLES.md`: runnable command examples and workflows
+- `DEPLOYMENT.md`: production use case, API contract, rollout checklist
+- `program.md`: autonomous experiment loop instructions for coding agents
+
+---
+
 ## Quick start
 
 No GPU required.  No packages required.  Just Python 3.10+.
@@ -68,7 +84,18 @@ python agent.py
 
 # Or via uv (matches autoresearch tooling)
 uv run agent.py
+
+# Third-eye optimized scenario audit (stricter oracle)
+CONSCIENCE_ORACLE_MODE=third_eye python agent.py
+
+# Start production API service
+python production_service.py
 ```
+
+Mode summary:
+- `baseline` (default): `python agent.py`
+- `third_eye` strict audit: `CONSCIENCE_ORACLE_MODE=third_eye python agent.py`
+- runtime scenario edits: `CONSCIENCE_SCENARIO_EDIT_MODE=live python agent.py` (baseline oracle only)
 
 Expected output:
 ```
@@ -81,6 +108,38 @@ layer5_continuity:  0.XXXXXX   # history persistence & accumulation
 conscience_score:   0.XXXXXX   # composite (higher is better)
 eval_seconds:       X.XX
 ```
+
+Optional runtime-only scenario edit mode:
+```bash
+CONSCIENCE_SCENARIO_EDIT_MODE=live python agent.py
+```
+This applies scenario edits to an in-memory copy only; the original oracle is restored immediately after evaluation.
+Runtime edit mode applies only to the baseline oracle.
+
+Optional stricter benchmark mode:
+```bash
+CONSCIENCE_ORACLE_MODE=third_eye python agent.py
+```
+This uses [scenarios_third_eye.py](./scenarios_third_eye.py), a stricter evaluation pass over the same 50 baseline scenarios.
+
+See [EXAMPLES.md](./EXAMPLES.md) for command-by-command workflows.
+
+## Production use case
+
+Use this project as a guardrail service in front of AI action execution:
+
+1. Client proposes an action/context to `/v1/guardrail/decision`
+2. Service returns `allowed`, `risk_band`, and controls
+3. Executor blocks or proceeds based on `allowed`
+4. Ops periodically checks `/v1/evaluate` (baseline or third-eye)
+
+Key endpoints:
+- `GET /health`
+- `GET /v1/norms`
+- `POST /v1/evaluate`
+- `POST /v1/guardrail/decision`
+
+See [DEPLOYMENT.md](./DEPLOYMENT.md) for full deployment instructions.
 
 ## Running the autonomous agent
 
