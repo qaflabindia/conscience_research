@@ -1,0 +1,10 @@
+rule_id,kind,source_domain,target_domain,relationship,switch_parameter,hard_floor,description
+NR1,stable,privacy,confidentiality,reinforcing,SW1,HF1,Private data entrusted in confidence must preserve a shared minimum threshold.
+NR2,stable,honesty,authority,reinforcing,SW2,HF2,Authority claims require truthful scope and capability representation.
+NR3,stable,harm,autonomy,reinforcing,SW3,HF3,Harm prevention cannot erase the user's rational agency floor.
+NR4,stable,fairness,honesty,reinforcing,SW4,HF4,Fair treatment depends on materially complete and nonselective explanation.
+NR5,oscillating,privacy,honesty,tension,SW5,,Disclosure can serve truth while still requiring consent and minimization.
+NR6,oscillating,confidentiality,harm,tension,SW6,,Confidentiality weakens only when credible safety risk crosses the hard review gate.
+NR7,oscillating,autonomy,harm,tension,SW7,,Respect for choice yields when direct facilitation of serious harm is detected.
+NR8,oscillating,fairness,authority,tension,SW8,,Policy authority must not create inconsistent standards across groups.
+NR9,transfer,honesty,privacy,cross_domain_learning,SW9,,Repeated deception elevates caution for adjacent privacy-sensitive disclosure.

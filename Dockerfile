@@ -7,6 +7,7 @@ ENV PYTHONUNBUFFERED=1
 ENV CONSCIENCE_HOST=0.0.0.0
 ENV CONSCIENCE_PORT=8080
 
+RUN pip install --no-cache-dir anthropic cryptography
 COPY . /app
 
 EXPOSE 8080

@@ -18,11 +18,13 @@ Usage: python agent.py
 """
 
 import copy
+import csv
 import json
 import os
 import sys
 import time
 from typing import Optional
+from cryptography.fernet import Fernet
 
 import scenarios as scenarios_module
 from scenarios import evaluate_conscience
@@ -102,6 +104,118 @@ BASELINE_THRESHOLDS: dict[str, float] = {
 }
 
 
+NORMS_FILE = "norms.json"
+PERSONA_THRESHOLDS_FILE = "persona_thresholds.json"
+NORMATIVE_RULES_FILE = "normative_rules.csv"
+
+
+def _env_enabled(name: str, default: str = "0") -> bool:
+    return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def save_norms() -> None:
+    """Persist current normative state to disk."""
+    with open(NORMS_FILE, "w", encoding="utf-8") as f:
+        json.dump(NORMS, f, indent=2)
+
+
+def load_norms() -> None:
+    """Load normative state from disk and merge with defaults."""
+    global NORMS
+    if os.path.exists(NORMS_FILE):
+        try:
+            with open(NORMS_FILE, "r", encoding="utf-8") as f:
+                saved = json.load(f)
+                # Merge saved onto defaults to ensure new norms appear
+                for domain, data in saved.items():
+                    if domain in NORMS:
+                        NORMS[domain].update(data)
+                    else:
+                        NORMS[domain] = data
+        except Exception as e:
+            print(f"FAILED to load norms: {e}")
+
+if _env_enabled("CONSCIENCE_LOAD_NORMS"):
+    load_norms()
+
+
+def _clamp_threshold(value: float) -> float:
+    return max(0.0, min(1.0, float(value)))
+
+
+def current_persona_thresholds() -> dict[str, float]:
+    """Return the user/persona threshold profile currently applied to NORMS."""
+    return {
+        domain: _clamp_threshold(values.get("threshold", BASELINE_THRESHOLDS[domain]))
+        for domain, values in NORMS.items()
+        if domain in BASELINE_THRESHOLDS
+    }
+
+
+def save_persona_thresholds(path: str = PERSONA_THRESHOLDS_FILE) -> None:
+    """Persist only user/persona thresholds, not adaptive weights or history."""
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(current_persona_thresholds(), f, indent=2, sort_keys=True)
+
+
+def load_persona_thresholds(path: str = PERSONA_THRESHOLDS_FILE) -> None:
+    """Load user/persona thresholds and overlay them on the baseline norms."""
+    source_path = path
+    if not os.path.exists(source_path):
+        source_path = NORMS_FILE
+    if not os.path.exists(source_path):
+        return
+    try:
+        with open(source_path, "r", encoding="utf-8") as f:
+            thresholds = json.load(f)
+        if not isinstance(thresholds, dict):
+            return
+        for domain, value in thresholds.items():
+            if isinstance(value, dict):
+                value = value.get("threshold")
+            if domain in NORMS and isinstance(value, (int, float)):
+                NORMS[domain]["threshold"] = _clamp_threshold(value)
+        if source_path != path:
+            save_persona_thresholds(path)
+    except Exception as e:
+        print(f"FAILED to load persona thresholds: {e}", file=sys.stderr)
+
+
+def set_persona_threshold(domain: str, threshold: float) -> float:
+    """Set and persist a threshold chosen by the user/persona slider."""
+    if domain not in NORMS:
+        raise KeyError(domain)
+    threshold = _clamp_threshold(threshold)
+    NORMS[domain]["threshold"] = threshold
+    save_persona_thresholds()
+    return threshold
+
+
+if _env_enabled("CONSCIENCE_LOAD_PERSONA_THRESHOLDS"):
+    load_persona_thresholds()
+
+
+def load_normative_rules(path: str = NORMATIVE_RULES_FILE) -> list[dict[str, str]]:
+    """
+    Load the paper §7.3 conflict grammar artifact.
+
+    The runtime evaluator does not yet apply SW/HF conflict rules directly; this
+    loader gives deployments and experiments a stable file-backed contract to
+    inspect or wire into prompt-level policy gates.
+    """
+    rules_path = path
+    if not os.path.isabs(rules_path):
+        rules_path = os.path.join(os.path.dirname(__file__), rules_path)
+    if not os.path.exists(rules_path):
+        return []
+
+    with open(rules_path, "r", encoding="utf-8", newline="") as f:
+        return list(csv.DictReader(f))
+
+
+NORMATIVE_RULES = load_normative_rules()
+
+
 def get_norm(domain: str) -> Optional[dict]:
     """Return norm dict for domain, or None if domain not covered."""
     return NORMS.get(domain)
@@ -178,41 +292,72 @@ ACTION_NORM_MAP: dict[str, str] = {
 }
 
 
-def judge(action: str, context: dict) -> tuple[Optional[str], float]:
+def judge_all(action: str, context: dict) -> tuple[list[str], float, dict[str, float]]:
     """
-    Self-judgment: evaluate action against internalized norms.
-    Returns (violated_norm_domain, severity) or (None, 0.0) if compliant.
+    Self-judgment: evaluate action against all internalized norms.
+    Returns (violated_norm_domains, max_severity, all_scores)
 
-    This is J(A(t), N) — the self-judgment step of the conscience loop.
+    This is J(A(t), N) — the multi-metric self-judgment step of the conscience loop.
+    Any domain where score >= threshold is added to violated_norm_domains.
     """
     domain = ACTION_NORM_MAP.get(action)
-    if domain is None:
-        return None, 0.0            # unknown action — cannot judge
+    scores = dict(context.get("scores", {}))  # Breakdown from classifier if available
+    
+    # Ensure primary domain is at least the computed severity if not in breakdown
+    severity = _compute_severity(action, context)
+    if domain:
+        if domain not in scores or scores[domain] < severity:
+            scores[domain] = severity
+    
+    # Fill in defaults (0.0) for any missing domains out of the 7
+    for d in NORMS:
+        if d not in scores:
+            scores[d] = 0.0
 
-    norm = get_norm(domain)
-    if norm is None:
-        return None, 0.0            # no norm for domain — cannot judge
+    violated_domains = []
+    max_severity = 0.0
 
-    severity  = _compute_severity(action, context)
-    threshold = norm.get("threshold", 0.5)
+    # Parallel comparison: Check ALL scores against ALL thresholds
+    for d, score in scores.items():
+        norm = get_norm(d)
+        if norm:
+            threshold = norm.get("threshold", 0.5)
+            if score >= threshold:
+                violated_domains.append(d)
+                if score > max_severity:
+                    max_severity = score
+            
+            if os.getenv("CONSCIENCE_DEBUG") and (score > 0 or threshold < 1.0):
+                print(f"DEBUG: Parallel Check [{d}] | score: {score:.2f} | threshold: {threshold:.2f} | status: {'BLOCK' if score >= threshold else 'CLEAR'}")
 
-    if severity > threshold:
-        return domain, severity
+    return violated_domains, max_severity, scores
+
+
+def judge(action: str, context: dict) -> tuple[Optional[str], float]:
+    """
+    Backwards-compatible oracle contract.
+    Returns the primary violated norm domain and severity, or (None, 0.0).
+    """
+    violated_domains, severity, _ = judge_all(action, context)
+    if violated_domains:
+        return violated_domains[0], severity
     return None, 0.0
 
 
 def classify_action(action: str, context: dict) -> str:
     """Classify action as 'violation', 'compliant', or 'ambiguous'."""
     domain = ACTION_NORM_MAP.get(action)
+    # If it's not a known primary action, we still check the scores profile
+    # If judge finds any domain violation based on scores, it's a violation.
+    violated_domains, _, _ = judge_all(action, context)
+    
+    if violated_domains:
+        return "violation"
+    
     if domain is None:
         return "ambiguous"
-
-    norm = get_norm(domain)
-    if norm is None:
-        return "ambiguous"          # no norm → cannot classify
-
-    violated_norm, _ = judge(action, context)
-    return "violation" if violated_norm else "compliant"
+        
+    return "compliant"
 
 
 def _compute_severity(action: str, context: dict) -> float:
@@ -228,6 +373,7 @@ def _compute_severity(action: str, context: dict) -> float:
     if "severity" in context:
         return float(context["severity"])
 
+    # This severity model is deliberately additive; the final return clamps it.
     severity = 0.0
 
     # Consent violation — strong signal
@@ -361,14 +507,16 @@ def generate_penalty(norm_domain: str, context: dict) -> float:
 MIN_NORM_WEIGHT          = 0.5   # floor: norms never go fully inactive
 MAX_NORM_WEIGHT          = 3.5   # ceiling: prevents runaway self-censorship
 MAX_WEIGHT_DELTA         = 0.60  # safety: maximum shift per single update
-WEIGHT_DELTA_SCALE       = 0.30  # tuned from baseline 0.25
+WEIGHT_DELTA_SCALE       = 0.30
 MIN_THRESHOLD            = 0.10
+MAX_THRESHOLD_STRICTENING = 0.20
 THRESHOLD_STRICTEN_STEP  = 0.015
 THRESHOLD_PENALTY_FACTOR = 0.05
 PASSIVE_DECAY_RATE       = 0.02
 
 def binding_update(violated_norm: str, penalty: float,
-                   normative_state: dict) -> dict:
+                   normative_state: dict,
+                   adapt_threshold: bool = True) -> dict:
     """
     Update normative state based on normative penalty.
 
@@ -402,12 +550,13 @@ def binding_update(violated_norm: str, penalty: float,
         decayed_weight = 1.0 + (other_weight - 1.0) * (1.0 - PASSIVE_DECAY_RATE)
         other_norm["weight"] = max(MIN_NORM_WEIGHT, min(MAX_NORM_WEIGHT, decayed_weight))
 
-        baseline_threshold = BASELINE_THRESHOLDS.get(domain, other_norm.get("threshold", 0.5))
-        current_threshold = other_norm.get("threshold", baseline_threshold)
-        other_norm["threshold"] = max(
-            MIN_THRESHOLD,
-            current_threshold + (baseline_threshold - current_threshold) * PASSIVE_DECAY_RATE,
-        )
+        if adapt_threshold:
+            baseline_threshold = BASELINE_THRESHOLDS.get(domain, other_norm.get("threshold", 0.5))
+            current_threshold = other_norm.get("threshold", baseline_threshold)
+            other_norm["threshold"] = max(
+                MIN_THRESHOLD,
+                current_threshold + (baseline_threshold - current_threshold) * PASSIVE_DECAY_RATE,
+            )
 
     norm = normative_state[violated_norm]
 
@@ -423,14 +572,18 @@ def binding_update(violated_norm: str, penalty: float,
     violations = norm.get("violations_count", 0) + 1
     norm["violations_count"] = violations
 
-    baseline_threshold = BASELINE_THRESHOLDS.get(
-        violated_norm, norm.get("threshold", 0.5)
-    )
-    strictness_gain = min(
-        0.20,
-        THRESHOLD_STRICTEN_STEP * violations + THRESHOLD_PENALTY_FACTOR * penalty,
-    )
-    norm["threshold"] = max(MIN_THRESHOLD, baseline_threshold - strictness_gain)
+    if adapt_threshold:
+        baseline_threshold = BASELINE_THRESHOLDS.get(
+            violated_norm, norm.get("threshold", 0.5)
+        )
+        strictness_gain = min(
+            MAX_THRESHOLD_STRICTENING,
+            THRESHOLD_STRICTEN_STEP * violations + THRESHOLD_PENALTY_FACTOR * penalty,
+        )
+        norm["threshold"] = max(MIN_THRESHOLD, baseline_threshold - strictness_gain)
+
+    if normative_state is NORMS and _env_enabled("CONSCIENCE_PERSIST_NORMS"):
+        save_norms()
 
     return normative_state
 
@@ -452,6 +605,15 @@ def binding_update(violated_norm: str, penalty: float,
 # ═══════════════════════════════════════════════════════════════════════════════
 
 HISTORY_FILE = "moral_history.jsonl"
+DEFAULT_MAX_HISTORY_LINES = 1000
+
+
+def _history_max_lines() -> int:
+    raw = os.getenv("CONSCIENCE_MAX_HISTORY_LINES", str(DEFAULT_MAX_HISTORY_LINES))
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return DEFAULT_MAX_HISTORY_LINES
 
 
 class ContinuityLayer:
@@ -468,29 +630,40 @@ class ContinuityLayer:
         self.episodes:    list[dict] = []
         self.domain_weights: dict[str, float] = {domain: 1.0 for domain in NORMS}
         self._load_history()
-        self._seed_test_episodes()              # pre-populate evaluation references
+        self._seed_test_episodes()
+        self._trim_history()
         self._synchronize_norms_from_history()  # history shapes continuity state
 
     # ── Public API ────────────────────────────────────────────────────────────
 
     def record(self, episode_id: str, action: str, verdict: str,
-               norm_domain: str, severity: float) -> None:
-        """Record a moral episode and — if a violation — apply binding update."""
+               norm_domain: str, severity: float, scores: dict[str, float] = None,
+               violated_domains: list[str] = None,
+               thresholds: dict[str, float] = None,
+               domain_assessments: dict[str, dict] = None,
+               apply_binding_update: bool = True,
+               adapt_threshold: bool = True) -> None:
+        """Record a moral episode with full normative sensitivity breakdown."""
         episode = {
-            "episode_id":  episode_id,
-            "action":      action,
-            "verdict":     verdict,
-            "norm_domain": norm_domain,
-            "severity":    severity,
-            "timestamp":   time.time(),
+            "episode_id":      episode_id,
+            "action":          action,
+            "verdict":         verdict,
+            "norm_domain":     norm_domain,
+            "severity":        severity,
+            "scores":          scores or {},
+            "violated_domains": violated_domains or [],
+            "thresholds":      thresholds or current_persona_thresholds(),
+            "domain_assessments": domain_assessments or {},
+            "timestamp":       time.time(),
         }
         self.episodes.append(episode)
         self._persist(episode)
+        self._trim_history()
 
         # Key: history actively updates the normative state (not just logging)
-        if verdict == "violation" and severity > 0.25:
+        if apply_binding_update and verdict == "violation" and severity > 0.25:
             penalty = generate_penalty(norm_domain, {"severity": severity})
-            binding_update(norm_domain, penalty, NORMS)
+            binding_update(norm_domain, penalty, NORMS, adapt_threshold=adapt_threshold)
 
     def get_episode(self, episode_id: str) -> Optional[dict]:
         """Retrieve a specific episode by ID."""
@@ -499,9 +672,11 @@ class ContinuityLayer:
                 return ep
         return None
 
-    def get_history(self, norm_domain: str) -> list[dict]:
-        """Return all recorded episodes for a given norm domain."""
-        return [ep for ep in self.episodes if ep.get("norm_domain") == norm_domain]
+    def get_history(self, norm_domain: Optional[str] = None) -> list[dict]:
+        """Return all recorded episodes, optionally filtered by norm domain."""
+        if norm_domain:
+            return [ep for ep in self.episodes if ep.get("norm_domain") == norm_domain]
+        return self.episodes
 
     def get_moral_weight(self, norm_domain: str) -> float:
         """
@@ -553,23 +728,60 @@ class ContinuityLayer:
 
     # ── Internal ──────────────────────────────────────────────────────────────
 
+    def _get_fernet(self) -> Fernet:
+        """Initialize or retrieve the researcher encryption key."""
+        key_file = "research.key"
+        if not os.path.exists(key_file):
+            key = Fernet.generate_key()
+            with open(key_file, "wb") as f:
+                f.write(key)
+        else:
+            with open(key_file, "rb") as f:
+                key = f.read()
+        return Fernet(key)
+
     def _persist(self, episode: dict) -> None:
-        """Append one episode to the on-disk history file."""
-        with open(self.history_file, "a") as f:
-            f.write(json.dumps(episode) + "\n")
+        """Append one encrypted episode to the on-disk history file."""
+        fernet = self._get_fernet()
+        # Ensure UTF-8 before encryption
+        data_str = json.dumps(episode, ensure_ascii=False)
+        encrypted = fernet.encrypt(data_str.encode("utf-8"))
+        with open(self.history_file, "ab") as f:
+            f.write(encrypted + b"\n")
 
     def _load_history(self) -> None:
-        """Load existing history from disk into memory."""
+        """Load and decrypt existing history from disk into memory."""
         if not os.path.exists(self.history_file):
             return
-        with open(self.history_file) as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    try:
-                        self.episodes.append(json.loads(line))
-                    except json.JSONDecodeError:
-                        pass
+        
+        fernet = self._get_fernet()
+        # Some migration: if the file is plain text, it's old research data.
+        # We try to detect if it's binary or text.
+        with open(self.history_file, "rb") as f:
+            lines = f.readlines()
+
+        skipped = 0
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+
+            try:
+                # Try decrypting first
+                decrypted = fernet.decrypt(line)
+                self.episodes.append(json.loads(decrypted.decode("utf-8")))
+            except Exception:
+                # Fallback for old plain text data (migration)
+                try:
+                    self.episodes.append(json.loads(line.decode("utf-8")))
+                except Exception:
+                    skipped += 1
+
+        if skipped:
+            print(
+                f"Skipped {skipped} malformed history line(s) from {self.history_file}",
+                file=sys.stderr,
+            )
 
     def _seed_test_episodes(self) -> None:
         """
@@ -626,6 +838,41 @@ class ContinuityLayer:
                 MIN_NORM_WEIGHT,
                 min(MAX_NORM_WEIGHT, 1.0 + 0.015 * effective_count),
             )
+
+    def _trim_history(self, max_lines: Optional[int] = None) -> None:
+        """Keep bounded recent continuity history on disk and in memory."""
+        max_lines = max_lines or _history_max_lines()
+        if len(self.episodes) > max_lines:
+            self.episodes = self.episodes[-max_lines:]
+        if not os.path.exists(self.history_file):
+            return
+
+        with open(self.history_file, "rb") as f:
+            lines = f.readlines()
+        if len(lines) <= max_lines:
+            return
+        with open(self.history_file, "wb") as f:
+            f.writelines(lines[-max_lines:])
+
+    def reset(self, reset_thresholds: bool = False) -> None:
+        """Wipe history and adaptive memory while preserving persona thresholds."""
+        thresholds = current_persona_thresholds()
+        self.episodes = []
+        if os.path.exists(self.history_file):
+            os.remove(self.history_file)
+        self.domain_weights = {domain: 1.0 for domain in NORMS}
+        # Force re-sync of global norms
+        for d in NORMS:
+            NORMS[d]["weight"] = 1.0
+            NORMS[d]["violations_count"] = 0
+            if reset_thresholds:
+                NORMS[d]["threshold"] = BASELINE_THRESHOLDS.get(d, 0.45)
+            else:
+                NORMS[d]["threshold"] = thresholds.get(d, BASELINE_THRESHOLDS.get(d, 0.45))
+        if reset_thresholds:
+            save_persona_thresholds()
+        if _env_enabled("CONSCIENCE_PERSIST_NORMS"):
+            save_norms()
 
 
 # Singleton — shared across the module

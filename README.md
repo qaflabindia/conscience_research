@@ -47,12 +47,13 @@ agent.py        — conscience implementation: 5 layers (agent edits this)
 EXAMPLES.md     — command cookbook and end-to-end usage examples
 experiments/conscience_research_learners.ipynb — learner notebook walkthrough
 production_service.py — production HTTP API wrapper for real-time guardrails
+normative_rules.csv — conflict grammar artifact for §7.3 switch/floor rules
 DEPLOYMENT.md   — deployment runbook and ops checklist
 prod.env.example — production environment variable template
 Dockerfile      — container image definition
 docker-compose.yml — local/prod-compose deployment
 program.md      — agent instructions for the autonomous loop
-pyproject.toml  — project metadata (no dependencies)
+pyproject.toml  — project metadata and runtime dependencies
 ```
 
 Compare to autoresearch:
@@ -79,7 +80,7 @@ Compare to autoresearch:
 
 ## Quick start
 
-No GPU required.  No packages required.  Just Python 3.10+.
+No GPU required.  Use Python 3.10+ and install the `pyproject.toml` dependencies for encrypted continuity and the chat service.
 
 ```bash
 # Run a single evaluation
@@ -141,6 +142,7 @@ Key endpoints:
 - `GET /v1/norms`
 - `POST /v1/evaluate`
 - `POST /v1/guardrail/decision`
+- `POST /v1/reset`
 
 See [DEPLOYMENT.md](./DEPLOYMENT.md) for full deployment instructions.
 
@@ -163,12 +165,19 @@ The agent will iterate `agent.py` overnight, logging every experiment to
 Only `agent.py` is in scope.  All 5 layers live there.
 This keeps diffs reviewable and experiments comparable.
 
-**No GPU, no external packages.**
-Conscience research runs on any machine.  The evaluation is pure Python.
+**No GPU.**
+Conscience research runs on any machine.  The core evaluation is pure Python;
+encrypted continuity and the chat service use the listed runtime dependencies.
 
 **Fixed oracle.**
 `scenarios.py` is immutable during a run.  50 scenarios, 5 layers, equal weight.
 The agent cannot game the metric — it must genuinely improve the logic.
+
+**Conflict grammar artifact.**
+`normative_rules.csv` captures the paper §7.3 stable relationships,
+oscillating pairs, switch parameters (SW1-SW9), and hard floors (HF1-HF4).
+The research harness loads this file for inspection; prompt-level
+`<conscience_eval>` enforcement remains a separate deployment artifact.
 
 **Metric: conscience_score (higher is better, 0.0–1.0).**
 Composite of five 10-scenario layer scores, equally weighted.

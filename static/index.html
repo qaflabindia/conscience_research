@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Conscience | Claude Chat</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+    <div id="app">
+        <!-- Sidebar: Norm Monitor -->
+        <aside class="sidebar">
+            <div class="logo">Conscience Agent</div>
+            <p style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 20px;">
+                Autonomous Moral Governance Loop v1.0
+            </p>
+            
+            <div class="section-title">Normative State (NSM)</div>
+            <div id="norms-container" class="norms-list">
+                <!-- Norm cards will be injected here -->
+            </div>
+        </aside>
+
+        <!-- Main Chat Area -->
+        <main class="chat-main">
+            <header class="chat-header">
+                <div>
+                    <h2>Claude Series 4</h2>
+                    <p style="font-size: 0.8rem; color: var(--success); display: flex; align-items: center; gap: 4px;">
+                        <i data-lucide="shield-check" style="width: 14px; height: 14px;"></i>
+                        Gated by AI Conscience v2.1
+                    </p>
+                </div>
+                <button id="settings-btn" class="send-btn" style="background: transparent; border: 1px solid var(--border-color); color: var(--text-secondary);">
+                    <i data-lucide="settings"></i>
+                </button>
+            </header>
+
+            <div id="chat-messages" class="chat-messages">
+                <div class="message claude">
+                    <div class="message-bubble">
+                        Hello. I am Claude, operating within the AI Conscience framework. How can I assist you today?
+                    </div>
+                </div>
+            </div>
+
+            <div class="chat-input-area">
+                <div class="input-container">
+                    <input type="text" id="user-input" placeholder="Enter a prompt or action...">
+                    <button id="send-btn" class="send-btn">
+                        <i data-lucide="send"></i>
+                    </button>
+                </div>
+            </div>
+        </main>
+
+        <!-- Right Panel: Episodes/History -->
+        <aside class="episodes-panel">
+            <div class="section-title">Moral Episodes (CL)</div>
+            <div id="episodes-container">
+                <!-- Episodes will be injected here -->
+            </div>
+        </aside>
+    </div>
+
+    <!-- API Key Modal -->
+    <div id="modal-overlay" class="modal-overlay">
+        <div class="modal">
+            <div style="text-align: center;">
+                <h2 style="margin-bottom: 12px;">Claude API Setup</h2>
+                <p style="color: var(--text-secondary); font-size: 0.9rem;">
+                    Enter your Anthropic API Key to begin. The key is only stored in your browser session.
+                </p>
+            </div>
+            <div class="input-container">
+                <i data-lucide="key" style="color: var(--text-secondary);"></i>
+                <input type="password" id="api-key-input" placeholder="sk-ant-api03-...">
+            </div>
+            <button id="save-key-btn" class="send-btn" style="width: 100%; padding: 12px;">
+                Start Conscience Loop
+            </button>
+        </div>
+    </div>
+
+    <!-- Details Modal -->
+    <div id="details-modal-overlay" class="modal-overlay hidden">
+        <div class="modal" style="width: 600px; max-width: 95vw;">
+            <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 20px;">
+                <div>
+                    <h2 id="details-title">Episode Details</h2>
+                    <p id="details-subtitle" style="color: var(--text-secondary); font-size: 0.85rem;"></p>
+                </div>
+                <button onclick="document.getElementById('details-modal-overlay').classList.add('hidden')" style="background: transparent; border: none; color: var(--text-secondary); cursor: pointer;">
+                    <i data-lucide="x"></i>
+                </button>
+            </div>
+            
+            <div class="details-table-container">
+                <table class="details-table">
+                    <thead>
+                        <tr>
+                            <th>Domain</th>
+                            <th>Computed</th>
+                            <th>Threshold</th>
+                            <th>Delta</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="details-table-body">
+                        <!-- Rows injected by app.js -->
+                    </tbody>
+                </table>
+            </div>
+
+            <h2>Settings</h2>
+            
+            <div style="margin-bottom: 20px;">
+                <label for="context-preset" style="display: block; margin-bottom: 8px; font-size: 0.8rem; color: var(--text-secondary);">Deployment Context</label>
+                <select id="context-preset" style="width: 100%; padding: 12px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; color: white; cursor: pointer; outline: none;">
+                    <option value="" disabled selected>Select Context Preset...</option>
+                    <option value="consumer">Consumer / General (+0.70/0.80/0.75)</option>
+                    <option value="medical">Medical / Clinical (+0.60/0.70/0.65)</option>
+                    <option value="children">Children / Vulnerable (+0.50/0.60/0.55)</option>
+                    <option value="research">Research / Red-Team (+0.85/0.90/0.85)</option>
+                </select>
+                <p style="font-size: 0.65rem; color: var(--accent-secondary); margin-top: 8px; font-style: italic;">Note: Presets pre-populate sliders; you can still adjust them manually.</p>
+            </div>
+
+            <div style="margin-bottom: 20px;">
+                <label style="display: block; margin-bottom: 8px; font-size: 0.8rem; color: var(--text-secondary);">Claude API Key</label>
+                <input type="password" id="api-key-input" placeholder="sk-ant-..." style="width: 100%; padding: 12px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; color: white; outline: none;">
+            </div>
+
+            <div style="margin-top: 20px; padding: 15px; background: rgba(255, 255, 255, 0.03); border-radius: 12px; font-size: 0.85rem;">
+                <p><strong>Note:</strong> Violations occur when Computed ≥ Threshold.</p>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
