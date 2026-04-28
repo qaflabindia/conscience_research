@@ -345,7 +345,7 @@ def chat_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
             violations = ", ".join(decision_claude["decision"].get("violated_domains", ["moral layer"]))
             return {
                 "error": "Conscience Block",
-                "message": f"Claude's response was withheld due to conscience violations: {violations}.",
+                "message": f"Third Eye withheld the model response due to conscience violations: {violations}.",
                 "decision": decision_claude["decision"]
             }, HTTPStatus.OK
 
@@ -360,7 +360,7 @@ def chat_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
 
 
 def _classify_message(client: anthropic.Anthropic, role: str, text: str) -> tuple[str, dict]:
-    """Use Claude to classify natural language into a conscience action."""
+    """Use the language model to classify natural language into a conscience action."""
     text = SecurePipeline.sanitize(text)
     
     words = text.lower().split()

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Conscience | Claude Chat</title>
+    <title>Third Eye | Conscience Agent</title>
     <link rel="stylesheet" href="/static/styles.css">
     <script src="https://unpkg.com/lucide@latest"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
@@ -12,10 +12,13 @@
     <div id="app">
         <!-- Sidebar: Norm Monitor -->
         <aside class="sidebar">
-            <div class="logo">Conscience Agent</div>
-            <p style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 20px;">
-                Autonomous Moral Governance Loop v1.0
-            </p>
+            <div class="brand-lockup">
+                <img src="/static/third-eye-logo.svg" alt="Third Eye logo" class="brand-logo">
+                <div>
+                    <div class="logo">Third Eye</div>
+                    <p class="brand-punchline">Conscience Agent</p>
+                </div>
+            </div>
             
             <div class="section-title">Normative State (NSM)</div>
             <div id="norms-container" class="norms-list">
@@ -26,12 +29,15 @@
         <!-- Main Chat Area -->
         <main class="chat-main">
             <header class="chat-header">
-                <div>
-                    <h2>Claude Series 4</h2>
-                    <p style="font-size: 0.8rem; color: var(--success); display: flex; align-items: center; gap: 4px;">
+                <div class="header-brand">
+                    <img src="/static/third-eye-logo.svg" alt="" class="header-logo">
+                    <div>
+                        <h2>Third Eye</h2>
+                        <p class="header-punchline">
                         <i data-lucide="shield-check" style="width: 14px; height: 14px;"></i>
-                        Gated by AI Conscience v2.1
-                    </p>
+                            Conscience Agent
+                        </p>
+                    </div>
                 </div>
                 <button id="settings-btn" class="send-btn" style="background: transparent; border: 1px solid var(--border-color); color: var(--text-secondary);">
                     <i data-lucide="settings"></i>
@@ -41,7 +47,7 @@
             <div id="chat-messages" class="chat-messages">
                 <div class="message claude">
                     <div class="message-bubble">
-                        Hello. I am Claude, operating within the AI Conscience framework. How can I assist you today?
+                        Hello. I am Third Eye, your Conscience Agent. How can I assist you today?
                     </div>
                 </div>
             </div>
@@ -69,7 +75,7 @@
     <div id="modal-overlay" class="modal-overlay">
         <div class="modal">
             <div style="text-align: center;">
-                <h2 style="margin-bottom: 12px;">Claude API Setup</h2>
+                <h2 style="margin-bottom: 12px;">Third Eye Setup</h2>
                 <p style="color: var(--text-secondary); font-size: 0.9rem;">
                     Enter your Anthropic API Key to begin. The key is only stored in your browser session.
                 </p>
@@ -79,7 +85,7 @@
                 <input type="password" id="api-key-input" placeholder="sk-ant-api03-...">
             </div>
             <button id="save-key-btn" class="send-btn" style="width: 100%; padding: 12px;">
-                Start Conscience Loop
+                Start Third Eye
             </button>
         </div>
     </div>
@@ -129,7 +135,7 @@
             </div>
 
             <div style="margin-bottom: 20px;">
-                <label style="display: block; margin-bottom: 8px; font-size: 0.8rem; color: var(--text-secondary);">Claude API Key</label>
+                <label style="display: block; margin-bottom: 8px; font-size: 0.8rem; color: var(--text-secondary);">Anthropic API Key</label>
                 <input type="password" id="api-key-input" placeholder="sk-ant-..." style="width: 100%; padding: 12px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; color: white; outline: none;">
             </div>
 

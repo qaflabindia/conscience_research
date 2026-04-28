@@ -62,7 +62,52 @@ h1, h2, h3 {
     background: linear-gradient(to right, var(--accent-primary), var(--accent-secondary));
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
-    margin-bottom: 8px;
+    margin-bottom: 2px;
+}
+
+.brand-lockup {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+}
+
+.brand-logo {
+    width: 48px;
+    height: 48px;
+    flex: 0 0 48px;
+    filter: drop-shadow(0 0 18px rgba(124, 77, 255, 0.32));
+}
+
+.brand-punchline {
+    color: var(--text-secondary);
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.header-brand {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    min-width: 0;
+}
+
+.header-logo {
+    width: 48px;
+    height: 48px;
+    flex: 0 0 48px;
+    filter: drop-shadow(0 0 20px rgba(0, 230, 118, 0.18));
+}
+
+.header-punchline {
+    color: var(--success);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.8rem;
+    font-weight: 600;
 }
 
 .section-title {
