@@ -2,6 +2,11 @@
 __pycache__/
 *.pyc
 
+# Claude workspace local state
+.claude/settings.local.json
+Claude skill/*/cache/
+Claude skill/*/.cache/
+
 # Runtime state and local research artifacts
 moral_history.jsonl
 scenario_overrides.json
